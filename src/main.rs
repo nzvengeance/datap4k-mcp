@@ -38,7 +38,10 @@ async fn main() -> Result<()> {
     match cli.command.unwrap_or(Command::Serve) {
         Command::Serve => {
             tracing::info!("Starting datap4k-mcp server");
-            println!("Server not yet implemented");
+            let config = datap4k_mcp::config::Config::load()?;
+            let indexer = datap4k_mcp::index::Indexer::open(&config)?;
+            let server = datap4k_mcp::server::DataP4kServer::new(indexer, config);
+            server.run().await?;
         }
         Command::Index { path, version } => {
             let version = version.unwrap_or_else(|| {
