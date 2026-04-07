@@ -1,0 +1,6 @@
+<ObjectContainer name="test_location" entityCount="2" minBounds="-100,-100,-100" maxBounds="100,100,100">
+  <Entities>
+    <Entity name="npc_guard_01" entityClass="test_npc_01" pos="10,20,30" />
+    <Entity name="weapon_rack_01" entityClass="WeaponGun_S1_BEHR_Gatling" pos="15,20,30" />
+  </Entities>
+</ObjectContainer>

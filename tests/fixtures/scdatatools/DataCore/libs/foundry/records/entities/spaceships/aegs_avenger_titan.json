@@ -1,0 +1,26 @@
+{
+  "_RecordName_": "EntityClassDefinition.AEGS_Avenger_Titan",
+  "_RecordId_": "97648869-5fa5-42da-b804-4d9314289539",
+  "_RecordValue_": {
+    "_Type_": "EntityClassDefinition",
+    "tags": [
+      {
+        "_RecordPath_": "file://./../../../../../libs/foundry/records/tagdatabase/tagdatabase.tagdatabase.json",
+        "_RecordName_": "Tag.5f12dd31-4ff9-41a5-b5e2-916270351ba9",
+        "_RecordId_": "5f12dd31-4ff9-41a5-b5e2-916270351ba9"
+      }
+    ],
+    "Components": {
+      "SAttachableComponentParams": {
+        "AttachDef": {
+          "Type": "Ship",
+          "SubType": "Medium"
+        }
+      },
+      "VehicleComponentParams": {
+        "vehicleName": "Avenger Titan",
+        "manufacturer": "file://./../../../../../libs/foundry/records/scitemmanufacturer/aegs.json"
+      }
+    }
+  }
+}

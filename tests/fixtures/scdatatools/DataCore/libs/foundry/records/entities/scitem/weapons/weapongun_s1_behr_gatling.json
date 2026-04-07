@@ -1,0 +1,15 @@
+{
+  "_RecordName_": "EntityClassDefinition.WeaponGun_S1_BEHR_Gatling",
+  "_RecordId_": "aaaa1111-2222-3333-4444-555566667777",
+  "_RecordValue_": {
+    "_Type_": "EntityClassDefinition",
+    "Components": {
+      "SAttachableComponentParams": {
+        "AttachDef": { "Type": "WeaponGun", "SubType": "Gun" }
+      },
+      "SAmmoContainerComponentParams": {
+        "ammoParamsRecord": "file://./../../../../../libs/foundry/records/ammoparams/bullet_ballistic_gatling_s1.json"
+      }
+    }
+  }
+}

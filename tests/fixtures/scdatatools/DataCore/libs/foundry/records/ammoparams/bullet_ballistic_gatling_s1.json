@@ -1,0 +1,10 @@
+{
+  "_RecordName_": "AmmoParams.Bullet_Ballistic_Gatling_S1",
+  "_RecordId_": "bbbb1111-2222-3333-4444-555566667777",
+  "_RecordValue_": {
+    "_Type_": "AmmoParams",
+    "speed": 1800.0,
+    "lifetime": 2.5,
+    "damage": { "physical": 36.0, "energy": 0.0 }
+  }
+}

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Loadout>
+  <Items>
+    <Item portName="Body_ItemPort" itemName="test_body_01" tag="Char_Body(Male)" ownership="0" gameFlags="0" entitlementUrnOverride="empty">
+      <Items>
+        <Item portName="Weapon_ItemPort" itemName="WeaponGun_S1_BEHR_Gatling" tag="FPS_Weapon" ownership="0" gameFlags="0" entitlementUrnOverride="empty" />
+      </Items>
+    </Item>
+  </Items>
+</Loadout>
