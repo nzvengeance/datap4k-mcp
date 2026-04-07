@@ -41,8 +41,28 @@ async fn main() -> Result<()> {
             println!("Server not yet implemented");
         }
         Command::Index { path, version } => {
-            tracing::info!("Indexing: {path}");
-            println!("Indexer not yet implemented");
+            let version = version.unwrap_or_else(|| {
+                let dirname = std::path::Path::new(&path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                datap4k_mcp::model::version_from_dirname(&dirname)
+                    .map(|(v, _)| v)
+                    .unwrap_or(dirname)
+            });
+            tracing::info!("Indexing {path} as version {version}");
+
+            let mut config = datap4k_mcp::config::Config::load()?;
+            let indexer = datap4k_mcp::index::Indexer::open(&config)?;
+            let stats = indexer.index_directory(&path, &version, "auto")?;
+
+            config.add_version(&path, &version, "auto");
+            config.save()?;
+
+            println!(
+                "Indexed {}: {} entities, {} edges, {} warnings",
+                stats.version, stats.node_count, stats.edge_count, stats.warning_count
+            );
         }
     }
 
