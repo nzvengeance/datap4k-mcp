@@ -8,11 +8,8 @@ repository = "https://github.com/nzvengeance/datap4k-mcp"
 
 [dependencies]
 rmcp = { version = "1", features = ["server", "transport-io"] }
-# NOTE: rusqlite (bundled) and cozo (storage-sqlite) both declare `links = "sqlite3"`,
-# which Cargo forbids in the same binary. cozo will be wired in Task 6 — at that point
-# we either move it to a workspace crate, use storage-rocksdb, or drop bundled rusqlite.
 rusqlite = { version = "0.32", features = ["bundled", "bundled-full"] }
-# cozo = { version = "0.7", features = ["storage-sqlite", "rayon"], default-features = false }
+cozo = { version = "0.7", default-features = false, features = ["storage-sled", "rayon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 quick-xml = { version = "0.36", features = ["serialize"] }
