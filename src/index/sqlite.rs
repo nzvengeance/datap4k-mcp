@@ -8,6 +8,7 @@ use rusqlite::{Connection, params};
 use crate::model::{EntityType, Node};
 
 /// Metadata about an indexed game version.
+#[derive(Debug)]
 pub struct VersionInfo {
     pub id: i64,
     pub code: String,
