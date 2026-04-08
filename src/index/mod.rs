@@ -106,26 +106,35 @@ impl Indexer {
         self.sqlite.add_version(version, None, data_path)
             .context("failed to add version to SQLite")?;
 
-        // Insert entities into Cozo in batches of 500
+        // Insert entities into Cozo in batches of 5000
         let entity_tuples: Vec<(uuid::Uuid, &str, &str, &str)> = merged.nodes
             .iter()
             .map(|n| (n.id, n.class_name.as_str(), n.entity_type.as_str(), n.game_version.as_str()))
             .collect();
 
-        for chunk in entity_tuples.chunks(500) {
+        let entity_chunks = entity_tuples.chunks(5000);
+        let entity_total = entity_chunks.len();
+        for (i, chunk) in entity_tuples.chunks(5000).enumerate() {
             self.graph.insert_entities(chunk)
                 .context("failed to insert entities into Cozo")?;
+            if (i + 1) % 5 == 0 || i + 1 == entity_total {
+                tracing::info!("  graph entities: {}/{}", (i + 1) * 5000.min(entity_tuples.len() - i * 5000 + i * 5000), entity_tuples.len());
+            }
         }
 
-        // Insert edges into Cozo in batches of 500
+        // Insert edges into Cozo in batches of 5000
         let edge_tuples: Vec<(uuid::Uuid, uuid::Uuid, &str, &str)> = merged.edges
             .iter()
             .map(|e| (e.source_id, e.target_id, e.label.as_str(), e.source_field.as_str()))
             .collect();
 
-        for chunk in edge_tuples.chunks(500) {
+        let edge_total_chunks = (edge_tuples.len() + 4999) / 5000;
+        for (i, chunk) in edge_tuples.chunks(5000).enumerate() {
             self.graph.insert_edges(chunk)
                 .context("failed to insert edges into Cozo")?;
+            if (i + 1) % 10 == 0 || i + 1 == edge_total_chunks {
+                tracing::info!("  graph edges: batch {}/{}", i + 1, edge_total_chunks);
+            }
         }
 
         tracing::info!(
