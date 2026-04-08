@@ -29,6 +29,12 @@ impl super::P4kParser for ScdatatoolsParser {
     fn parse(&self, path: &Path, version: &str) -> Result<ParseResult> {
         let mut result = ParseResult::new();
 
+        // 0. Load localization strings (English)
+        let loc_map = load_localization(path);
+        if !loc_map.is_empty() {
+            tracing::info!("Loaded {} localization strings", loc_map.len());
+        }
+
         // 1. DataCore JSON records
         let datacore_dir = path.join("DataCore/libs/foundry/records");
         if datacore_dir.is_dir() {
@@ -48,6 +54,39 @@ impl super::P4kParser for ScdatatoolsParser {
         if soc_dir.is_dir() {
             let soc_result = parse_soc_containers(&soc_dir, version);
             result.merge(soc_result);
+        }
+
+        // 4. Enrich nodes with localization display names
+        if !loc_map.is_empty() {
+            let mut enriched = 0usize;
+            for node in &mut result.nodes {
+                // Try item_Name{class_name} pattern
+                if let Some(display_name) = loc_map.get(&format!("item_Name{}", node.class_name)) {
+                    node.properties.insert(
+                        "display_name".to_string(),
+                        serde_json::Value::String(display_name.clone()),
+                    );
+                    enriched += 1;
+                }
+                // Also try item_Desc{class_name} for description
+                if let Some(desc) = loc_map.get(&format!("item_Desc{}", node.class_name)) {
+                    node.properties.insert(
+                        "description".to_string(),
+                        serde_json::Value::String(desc.clone()),
+                    );
+                }
+                // Try vehicle_Name{class_name} for ships
+                if !node.properties.contains_key("display_name") {
+                    if let Some(display_name) = loc_map.get(&format!("vehicle_Name{}", node.class_name)) {
+                        node.properties.insert(
+                            "display_name".to_string(),
+                            serde_json::Value::String(display_name.clone()),
+                        );
+                        enriched += 1;
+                    }
+                }
+            }
+            tracing::info!("Enriched {} entities with display names", enriched);
         }
 
         Ok(result)
@@ -676,4 +715,45 @@ mod tests {
         let ty = classify_entity(Some(&rv), Path::new("test.json"), Path::new("."));
         assert_eq!(ty, EntityType::Ammo);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Localization
+// ---------------------------------------------------------------------------
+
+/// Load English localization strings from `Extracted/Data/Localization/english/global.ini`.
+///
+/// Returns a map of key → value. The file format is `key=value` per line, with
+/// BOM at the start. Keys like `item_Namevolt_rifle_energy_01` map to display names
+/// like "Parallax Energy Assault Rifle".
+fn load_localization(base_path: &Path) -> HashMap<String, String> {
+    let ini_path = base_path.join("Extracted/Data/Localization/english/global.ini");
+    if !ini_path.is_file() {
+        tracing::debug!("No localization file at {}", ini_path.display());
+        return HashMap::new();
+    }
+
+    let content = match std::fs::read_to_string(&ini_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Failed to read localization file: {e}");
+            return HashMap::new();
+        }
+    };
+
+    // Strip BOM if present
+    let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
+
+    let mut map = HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            map.insert(key.to_string(), value.to_string());
+        }
+    }
+
+    map
 }
