@@ -158,12 +158,8 @@ impl Indexer {
                         }
                     }
                 } else {
-                    // No class name in properties — check if target exists as entity
-                    if known_uuids.contains(&edge.target_id) {
-                        None // target exists, keep as-is
-                    } else {
-                        None // can't resolve, will be dropped below
-                    }
+                    // No class name in properties — can't resolve
+                    None
                 }
             };
 
@@ -171,12 +167,9 @@ impl Indexer {
                 edge.target_id = real_uuid;
                 resolved_count += 1;
                 true
-            } else if edge.target_id == nil {
+            } else if edge.target_id == nil || !known_uuids.contains(&edge.target_id) {
                 dropped_count += 1;
-                false // drop unresolvable nil-target edges
-            } else if !known_uuids.contains(&edge.target_id) {
-                dropped_count += 1;
-                false // drop edges to non-existent entities
+                false // drop nil-target or non-existent entity edges
             } else {
                 true // keep edges with valid targets
             }
@@ -229,7 +222,7 @@ impl Indexer {
             .map(|e| (e.source_id, e.target_id, e.label.as_str(), e.source_field.as_str()))
             .collect();
 
-        let edge_total_chunks = (edge_tuples.len() + 4999) / 5000;
+        let edge_total_chunks = edge_tuples.len().div_ceil(5000);
         for (i, chunk) in edge_tuples.chunks(5000).enumerate() {
             self.graph.insert_edges(chunk)
                 .context("failed to insert edges into Cozo")?;
@@ -315,12 +308,7 @@ fn extract_actor_faction(class_name: &str) -> Option<&'static str> {
         return None;
     }
     let after = &lower[npc_prefix.len()..];
-    for (faction, _) in FACTION_PREFIXES {
-        if after.starts_with(faction) {
-            return Some(faction);
-        }
-    }
-    None
+    FACTION_PREFIXES.iter().map(|(faction, _)| faction).find(|&faction| after.starts_with(faction)).map(|v| v as _)
 }
 
 /// Check if a SOC location path matches a faction.

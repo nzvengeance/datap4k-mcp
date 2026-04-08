@@ -4,21 +4,11 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Top-level configuration for datap4k-mcp.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     pub sources: Sources,
     pub index: IndexConfig,
     pub server: ServerConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            sources: Sources::default(),
-            index: IndexConfig::default(),
-            server: ServerConfig::default(),
-        }
-    }
 }
 
 impl Config {
