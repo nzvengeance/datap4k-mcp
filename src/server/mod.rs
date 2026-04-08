@@ -11,7 +11,9 @@ use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        CallToolResult, Content, Implementation, ServerCapabilities, ServerInfo,
+        CallToolResult, Content, ErrorData, GetPromptRequestParams, GetPromptResult,
+        Implementation, ListPromptsResult, ListResourcesResult, ReadResourceRequestParams,
+        ReadResourceResult, ServerCapabilities, ServerInfo,
     },
     tool, tool_handler, tool_router, transport,
 };
@@ -22,6 +24,8 @@ use crate::index::Indexer;
 use crate::model::{EntityType, Node};
 use crate::query::QueryEngine;
 
+use prompts as prompt_handlers;
+use resources as resource_handlers;
 use tools::*;
 
 /// MCP server backed by the p4k data index.
@@ -101,18 +105,155 @@ impl DataP4kServer {
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for DataP4kServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                "datap4k-mcp",
-                env!("CARGO_PKG_VERSION"),
-            ))
-            .with_instructions(
-                "Star Citizen p4k game data server. Use 'search' for full-text search, \
-                 'lookup' by UUID/class name, 'traverse'/'path' for graph queries, \
-                 'diff' to compare versions, 'query'/'graph_query' for raw SQL/Datalog, \
-                 'locate'/'who_uses' for relationship lookups, 'index' to load data, \
-                 and 'status' for current index stats.",
-            )
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .enable_prompts()
+                .build(),
+        )
+        .with_server_info(Implementation::new(
+            "datap4k-mcp",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_instructions(
+            "Star Citizen p4k game data server. Use 'search' for full-text search, \
+             'lookup' by UUID/class name, 'traverse'/'path' for graph queries, \
+             'diff' to compare versions, 'query'/'graph_query' for raw SQL/Datalog, \
+             'locate'/'who_uses' for relationship lookups, 'index' to load data, \
+             and 'status' for current index stats. \
+             Resources: p4k://versions, p4k://categories, p4k://stats, p4k://schema. \
+             Prompts: investigate-item, compare-versions, explore-location, trace-reward-chain.",
+        )
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult::with_all_items(resource_handlers::list()))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        let uri = request.uri.as_str();
+        let json = match uri {
+            "p4k://versions" => {
+                self.with_query_engine(|qe| {
+                    qe.status().map(|info| {
+                        let items: Vec<serde_json::Value> = info
+                            .versions
+                            .iter()
+                            .map(|v| {
+                                serde_json::json!({
+                                    "code": v.code,
+                                    "build_number": v.build_number,
+                                    "data_path": v.data_path,
+                                })
+                            })
+                            .collect();
+                        serde_json::to_string_pretty(&items)
+                            .unwrap_or_else(|_| "[]".to_string())
+                    })
+                })
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            }
+            "p4k://categories" => {
+                self.with_query_engine(|qe| {
+                    qe.status().map(|info| {
+                        let map: serde_json::Map<String, serde_json::Value> = info
+                            .category_counts
+                            .into_iter()
+                            .map(|(k, v)| (k, serde_json::json!(v)))
+                            .collect();
+                        serde_json::to_string_pretty(&map)
+                            .unwrap_or_else(|_| "{}".to_string())
+                    })
+                })
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            }
+            "p4k://stats" => {
+                self.with_query_engine(|qe| {
+                    qe.status().map(|info| {
+                        let obj = serde_json::json!({
+                            "total_entities": info.entity_count,
+                            "version_count": info.versions.len(),
+                            "versions": info.versions.iter().map(|v| &v.code).collect::<Vec<_>>(),
+                        });
+                        serde_json::to_string_pretty(&obj)
+                            .unwrap_or_else(|_| "{}".to_string())
+                    })
+                })
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            }
+            "p4k://schema" => {
+                let variants = &[
+                    "Ship", "Vehicle", "WeaponPersonal", "WeaponShip", "Component",
+                    "Ammo", "Armor", "Consumable", "Commodity", "Mission", "Location",
+                    "Shop", "NPC", "Loadout", "CraftingBlueprint", "Faction",
+                    "Reputation", "LootTable", "AudioDef", "Material", "Tag", "Unknown",
+                ];
+                serde_json::to_string_pretty(variants)
+                    .unwrap_or_else(|_| "[]".to_string())
+            }
+            _ => {
+                return Err(ErrorData::resource_not_found(
+                    format!("Unknown resource URI: {uri}"),
+                    None,
+                ));
+            }
+        };
+
+        Ok(ReadResourceResult::new(vec![
+            resource_handlers::text_contents(uri, json),
+        ]))
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        Ok(ListPromptsResult::with_all_items(prompt_handlers::list()))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<GetPromptResult, ErrorData> {
+        let args = request.arguments.as_ref();
+        let get_arg = |key: &str| -> Option<String> {
+            args.and_then(|m| m.get(key))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        };
+
+        match request.name.as_str() {
+            "investigate-item" => {
+                let item_name = get_arg("item_name").unwrap_or_else(|| "<item>".to_string());
+                Ok(prompt_handlers::investigate_item(&item_name))
+            }
+            "compare-versions" => {
+                let version_a = get_arg("version_a").unwrap_or_else(|| "<version_a>".to_string());
+                let version_b = get_arg("version_b").unwrap_or_else(|| "<version_b>".to_string());
+                let category = get_arg("category");
+                Ok(prompt_handlers::compare_versions(&version_a, &version_b, category.as_deref()))
+            }
+            "explore-location" => {
+                let location = get_arg("location").unwrap_or_else(|| "<location>".to_string());
+                Ok(prompt_handlers::explore_location(&location))
+            }
+            "trace-reward-chain" => {
+                let mission_name = get_arg("mission_name").unwrap_or_else(|| "<mission>".to_string());
+                Ok(prompt_handlers::trace_reward_chain(&mission_name))
+            }
+            _other => Err(ErrorData::method_not_found::<rmcp::model::GetPromptRequestMethod>()),
+        }
     }
 }
 
