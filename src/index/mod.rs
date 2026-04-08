@@ -89,13 +89,102 @@ impl Indexer {
             merged.merge(result);
         }
 
-        let node_count = merged.nodes.len();
-        let edge_count = merged.edges.len();
         let warning_count = merged.warnings.len();
 
         tracing::info!(
-            "Parsed {}: {} nodes, {} edges, {} warnings",
-            version, node_count, edge_count, warning_count
+            "Parsed {}: {} nodes, {} edges (pre-resolution), {} warnings",
+            version, merged.nodes.len(), merged.edges.len(), warning_count
+        );
+
+        // --- Edge resolution ---
+        // Build lookup maps from parsed entities
+        let class_name_to_uuid: std::collections::HashMap<String, uuid::Uuid> = merged
+            .nodes
+            .iter()
+            .map(|n| (n.class_name.clone(), n.id))
+            .collect();
+
+        let known_uuids: std::collections::HashSet<uuid::Uuid> = merged
+            .nodes
+            .iter()
+            .map(|n| n.id)
+            .collect();
+
+        let mut resolved_count = 0usize;
+        let mut dropped_count = 0usize;
+
+        // Resolve edges: match unresolved targets to real entity UUIDs
+        merged.edges.retain_mut(|edge| {
+            let nil = uuid::Uuid::nil();
+
+            // Try to resolve by class name from edge properties
+            let resolved = if edge.target_id == nil {
+                // file:// ref edges — try to resolve path to a class name
+                if let Some(serde_json::Value::String(file_ref)) = edge.properties.get("file_ref") {
+                    // Extract class name from file path: last segment without extension
+                    let class_name = file_ref
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or("")
+                        .trim_end_matches(".json");
+                    class_name_to_uuid.get(class_name).copied()
+                } else {
+                    None
+                }
+            } else {
+                // Check if the target is a v5-hashed class name (from loadouts/SOC)
+                // by looking for item_class_name or entity_class in edge properties
+                let class_name = edge
+                    .properties
+                    .get("item_class_name")
+                    .or_else(|| edge.properties.get("entity_class"))
+                    .and_then(|v| v.as_str());
+
+                if let Some(cn) = class_name {
+                    let v5_uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, cn.as_bytes());
+                    if edge.target_id == v5_uuid {
+                        // This is a v5-hashed placeholder — resolve to real entity UUID
+                        class_name_to_uuid.get(cn).copied()
+                    } else {
+                        // Target UUID is a real _RecordId_ — check if it exists
+                        if known_uuids.contains(&edge.target_id) {
+                            None // already resolved, keep as-is
+                        } else {
+                            // Target doesn't exist — try class name resolution
+                            class_name_to_uuid.get(cn).copied()
+                        }
+                    }
+                } else {
+                    // No class name in properties — check if target exists as entity
+                    if known_uuids.contains(&edge.target_id) {
+                        None // target exists, keep as-is
+                    } else {
+                        None // can't resolve, will be dropped below
+                    }
+                }
+            };
+
+            if let Some(real_uuid) = resolved {
+                edge.target_id = real_uuid;
+                resolved_count += 1;
+                true
+            } else if edge.target_id == nil {
+                dropped_count += 1;
+                false // drop unresolvable nil-target edges
+            } else if !known_uuids.contains(&edge.target_id) {
+                dropped_count += 1;
+                false // drop edges to non-existent entities
+            } else {
+                true // keep edges with valid targets
+            }
+        });
+
+        let node_count = merged.nodes.len();
+        let edge_count = merged.edges.len();
+
+        tracing::info!(
+            "Edge resolution: {} resolved, {} dropped, {} remaining",
+            resolved_count, dropped_count, edge_count
         );
 
         // Insert nodes into SQLite
