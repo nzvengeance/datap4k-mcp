@@ -41,7 +41,7 @@ impl CozoGraph {
         // Ignore "already exists" errors
         if let Err(e) = &res {
             let msg = e.to_string();
-            if !msg.contains("already exists") {
+            if !msg.contains("already exists") && !msg.contains("conflicts with an existing one") {
                 return Err(anyhow::anyhow!("failed to create entity relation: {msg}"));
             }
         }
@@ -54,7 +54,7 @@ impl CozoGraph {
         );
         if let Err(e) = &res {
             let msg = e.to_string();
-            if !msg.contains("already exists") {
+            if !msg.contains("already exists") && !msg.contains("conflicts with an existing one") {
                 return Err(anyhow::anyhow!("failed to create edge relation: {msg}"));
             }
         }
@@ -146,8 +146,9 @@ impl CozoGraph {
         // Seed: the start node (each row must be a list)
         lines.push(format!("start[uuid] <- [[\"{start_str}\"]]"));
 
-        // First hop
+        // First hop — follow edges in both directions
         lines.push("hop_1[dst] := start[src], *edge{src, dst}".to_string());
+        lines.push("hop_1[src] := start[dst], *edge{src, dst}".to_string());
 
         // Subsequent hops
         for i in 2..=depth {
@@ -155,19 +156,25 @@ impl CozoGraph {
                 "hop_{i}[dst] := hop_{}[src], *edge{{src, dst}}",
                 i - 1
             ));
+            lines.push(format!(
+                "hop_{i}[src] := hop_{}[dst], *edge{{src, dst}}",
+                i - 1
+            ));
         }
 
         // Collect all reachable nodes (union of all hops), excluding the start node
+        // Filter to only include nodes that exist as entities in the graph
         for i in 1..=depth {
             lines.push(format!("reachable[uuid] := hop_{i}[uuid]"));
         }
 
         lines.push(format!(
-            "?[uuid] := reachable[uuid], uuid != \"{}\"",
+            "?[uuid] := reachable[uuid], uuid != \"{}\", *entity{{uuid}}",
             start_str
         ));
 
         let query = lines.join("\n");
+        tracing::debug!("traverse query:\n{query}");
         let result = self.run_query(&query)?;
 
         let uuids = result
