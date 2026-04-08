@@ -263,25 +263,113 @@ fn classify_by_path(path: &Path, records_dir: &Path) -> EntityType {
         .to_string_lossy();
     let rel_lower = rel.to_lowercase();
 
-    if rel_lower.contains("/spaceships/") || rel_lower.contains("/vehicles/") {
-        EntityType::Ship
-    } else if rel_lower.contains("/weapons/") {
-        EntityType::WeaponShip
-    } else if rel_lower.contains("/ammoparams/") {
-        EntityType::Ammo
-    } else if rel_lower.contains("/factions/") {
-        EntityType::Faction
-    } else if rel_lower.contains("/missions/") {
-        EntityType::Mission
-    } else if rel_lower.contains("/shops/") {
-        EntityType::Shop
-    } else if rel_lower.contains("/loadouts/") {
-        EntityType::Loadout
-    } else if rel_lower.contains("/loot/") {
-        EntityType::LootTable
-    } else {
-        EntityType::Unknown
+    // Ships & vehicles
+    if rel_lower.contains("/spaceships/") || rel_lower.contains("/scitem/ships/") {
+        return EntityType::Ship;
     }
+    if rel_lower.contains("/groundvehicles/") || rel_lower.contains("/scitem/vehicles/") {
+        return EntityType::Vehicle;
+    }
+
+    // Weapons
+    if rel_lower.contains("/weapons/") {
+        return if rel_lower.contains("/fps_weapons/") {
+            EntityType::WeaponPersonal
+        } else {
+            EntityType::WeaponShip
+        };
+    }
+
+    // Ammo
+    if rel_lower.contains("/ammoparams/") || rel_lower.contains("/ammobox/") {
+        return EntityType::Ammo;
+    }
+
+    // Armor & suit
+    if rel_lower.contains("/suit/") || rel_lower.contains("/human/") && rel_lower.contains("/armor") {
+        return EntityType::Armor;
+    }
+
+    // NPCs & actors
+    if rel_lower.contains("/actor/") || rel_lower.contains("/characters/") {
+        return EntityType::NPC;
+    }
+
+    // Missions
+    if rel_lower.contains("/missiondata/") || rel_lower.contains("/missionbroker/")
+        || rel_lower.contains("/missiongiver/") || rel_lower.contains("/missionscenarios/")
+        || rel_lower.contains("/missiontype/") || rel_lower.contains("/missionfailure") {
+        return EntityType::Mission;
+    }
+
+    // Factions
+    if rel_lower.contains("/factions/") || rel_lower.contains("/factions_legacy/") {
+        return EntityType::Faction;
+    }
+
+    // Reputation
+    if rel_lower.contains("/reputation/") || rel_lower.contains("/reputationvalue") {
+        return EntityType::Reputation;
+    }
+
+    // Crafting
+    if rel_lower.contains("/crafting/") {
+        return EntityType::CraftingBlueprint;
+    }
+
+    // Loot
+    if rel_lower.contains("/lootgeneration/") || rel_lower.contains("/loot/") {
+        return EntityType::LootTable;
+    }
+
+    // Shops
+    if rel_lower.contains("/shops/") || rel_lower.contains("/globalshopparams/") {
+        return EntityType::Shop;
+    }
+
+    // Loadouts
+    if rel_lower.contains("/loadoutkits/") || rel_lower.contains("/loadouts/") {
+        return EntityType::Loadout;
+    }
+
+    // Audio
+    if rel_lower.contains("/audio/") || rel_lower.contains("/voicebundle/")
+        || rel_lower.contains("/voicesingle/") || rel_lower.contains("/musiclogic/") {
+        return EntityType::AudioDef;
+    }
+
+    // Commodities
+    if rel_lower.contains("/commodit") {
+        return EntityType::Commodity;
+    }
+
+    // Consumables
+    if rel_lower.contains("/consumable") || rel_lower.contains("/carryables/") {
+        return EntityType::Consumable;
+    }
+
+    // Locations (starmap, transitsystem)
+    if rel_lower.contains("/starmap/") || rel_lower.contains("/transitsystem/")
+        || rel_lower.contains("/ssolarsystem/") {
+        return EntityType::Location;
+    }
+
+    // Components (mining, ship parts)
+    if rel_lower.contains("/mining/") {
+        return EntityType::Component;
+    }
+
+    // Tags
+    if rel_lower.contains("/tagdatabase/") {
+        return EntityType::Tag;
+    }
+
+    // Materials
+    if rel_lower.contains("/tintpalettes/") {
+        return EntityType::Material;
+    }
+
+    EntityType::Unknown
 }
 
 /// Recursively extract edges from JSON values.

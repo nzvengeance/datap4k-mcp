@@ -464,14 +464,17 @@ impl DataP4kServer {
     }
 
     /// Find locations where an entity can be found.
-    #[tool(name = "locate", description = "Find where an entity is located in the game world. Searches graph relationships for Location-type nodes connected to the entity.")]
+    #[tool(name = "locate", description = "Find where an entity is located in the game world. Smart multi-hop: searches direct locations first, then follows NPC/loadout chains to find spawn locations.")]
     async fn locate(&self, Parameters(req): Parameters<LocateRequest>) -> Result<CallToolResult, rmcp::ErrorData> {
         let nodes = self.resolve_entity(&req.entity).map_err(|e| {
             rmcp::ErrorData::invalid_params(e, None)
         })?;
 
         let mut locations: Vec<Node> = Vec::new();
+        let mut via_npcs: Vec<String> = Vec::new(); // track which NPCs led us to locations
+
         self.with_query_engine(|qe| {
+            // Phase 1: Direct location search (3 hops from the entity)
             for node in &nodes {
                 match qe.traverse(&node.id, 3) {
                     Ok(reachable) => {
@@ -486,24 +489,76 @@ impl DataP4kServer {
                     }
                 }
             }
+
+            // Phase 2: If no meaningful locations found, chain through NPCs/loadouts
+            // Find NPCs that use this item, then find their spawn locations
+            let only_default = locations.iter().all(|l| l.class_name == "default");
+            if locations.is_empty() || only_default {
+                let mut npc_ids: Vec<(uuid::Uuid, String)> = Vec::new();
+
+                // Find NPC-type entities connected to this item (via loadout chain)
+                for node in &nodes {
+                    if let Ok(reachable) = qe.traverse(&node.id, 3) {
+                        for n in reachable {
+                            if n.entity_type == EntityType::NPC {
+                                npc_ids.push((n.id, n.class_name.clone()));
+                            }
+                        }
+                    }
+                }
+
+                // Deduplicate NPCs
+                npc_ids.sort_by(|a, b| a.0.cmp(&b.0));
+                npc_ids.dedup_by(|a, b| a.0 == b.0);
+
+                // For each NPC, find their locations (1 hop — faction heuristic edges)
+                for (npc_id, npc_name) in &npc_ids {
+                    if let Ok(reachable) = qe.traverse(npc_id, 1) {
+                        for n in reachable {
+                            if n.entity_type == EntityType::Location && n.class_name != "default" {
+                                if !via_npcs.iter().any(|v| v == npc_name) {
+                                    via_npcs.push(npc_name.clone());
+                                }
+                                locations.push(n);
+                            }
+                        }
+                    }
+                }
+            }
         });
 
-        // Deduplicate by UUID
+        // Deduplicate and filter out generic metadata locations
         locations.sort_by(|a, b| a.id.cmp(&b.id));
         locations.dedup_by(|a, b| a.id == b.id);
 
-        if locations.is_empty() {
+        // Filter out noise: metadata files, harvestable components, transit peripherals
+        let meaningful: Vec<&Node> = locations.iter()
+            .filter(|l| {
+                let cn = l.class_name.to_lowercase();
+                !cn.contains("entitycomponent") && !cn.contains("harvestablecomponent")
+                    && !cn.contains("sctransit") && cn != "default"
+                    && !cn.contains("actionarea") && !cn.contains("subsumption")
+            })
+            .collect();
+
+        if meaningful.is_empty() {
             Ok(CallToolResult::success(vec![Content::text(format!(
-                "No location data found for '{}'.",
+                "No specific location data found for '{}'.",
                 req.entity
             ))]))
         } else {
-            let text = format!(
-                "Found {} locations for '{}':\n\n{}",
-                locations.len(),
+            let mut text = format!(
+                "Found {} locations for '{}':\n\n",
+                meaningful.len(),
                 req.entity,
-                format_nodes(&locations)
             );
+            if !via_npcs.is_empty() {
+                text.push_str(&format!(
+                    "(via NPCs: {})\n\n",
+                    via_npcs.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+                ));
+            }
+            text.push_str(&format_nodes(&meaningful.into_iter().cloned().collect::<Vec<_>>()));
             Ok(CallToolResult::success(vec![Content::text(text)]))
         }
     }
