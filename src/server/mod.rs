@@ -492,34 +492,93 @@ impl DataP4kServer {
 
             // Phase 2: If no meaningful locations found, chain through NPCs/loadouts
             // Find NPCs that use this item, then find their spawn locations
-            let only_default = locations.iter().all(|l| l.class_name == "default");
-            if locations.is_empty() || only_default {
-                let mut npc_ids: Vec<(uuid::Uuid, String)> = Vec::new();
+            let meaningful_direct_locs: Vec<&Node> = locations.iter().filter(|l| {
+                let cn = l.class_name.to_lowercase();
+                !cn.contains("entitycomponent") && !cn.contains("harvestable")
+                    && !cn.contains("sctransit") && cn != "default"
+                    && !cn.contains("actionarea") && !cn.contains("subsumption")
+                    && !cn.starts_with("old_") && !cn.contains("transitui")
+                    && !cn.contains("transitdisplay") && !cn.contains("transitstopdisplay")
+            }).collect();
+            tracing::info!("locate phase 1: {} raw locations, {} meaningful", locations.len(), meaningful_direct_locs.len());
+            if meaningful_direct_locs.is_empty() {
+                // Phase 2: Find where this item can be acquired via faction-location heuristic.
+                //
+                // Use SQL to find all loadout names containing this item's class_name,
+                // extract faction prefixes from those loadout names, then find locations
+                // matching those factions. This is fast and avoids expensive graph traversal.
 
-                // Find NPC-type entities connected to this item (via loadout chain)
-                for node in &nodes {
-                    if let Ok(reachable) = qe.traverse(&node.id, 3) {
-                        for n in reachable {
-                            if n.entity_type == EntityType::NPC {
-                                npc_ids.push((n.id, n.class_name.clone()));
+                let item_class = nodes.first().map(|n| n.class_name.clone()).unwrap_or_default();
+
+                // Find loadouts that reference this item by searching class_name patterns
+                let sql = format!(
+                    "SELECT DISTINCT class_name FROM entities WHERE entity_type = 'Loadout' \
+                     AND class_name LIKE '%{}%' LIMIT 100",
+                    item_class.replace('\'', "''")
+                );
+
+                let mut faction_prefixes: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+                if let Ok(rows) = qe.raw_sql(&sql) {
+                    // If no loadouts reference the item directly, try broader search:
+                    // find loadouts that share the same "default" SOC location (depth 1 from item)
+                    let loadout_names: Vec<String> = rows.iter()
+                        .filter_map(|r| r.first().cloned())
+                        .collect();
+
+                    // Also search for loadout class_names that match via `who_uses` pattern
+                    // (loadouts connected via graph edges)
+                    for node in &nodes {
+                        if let Ok(reachable) = qe.traverse(&node.id, 3) {
+                            for n in reachable {
+                                if n.entity_type == EntityType::Loadout {
+                                    let cn_lower = n.class_name.to_lowercase();
+                                    for prefix in &["asd", "ninetails", "headhunter", "roughandready",
+                                                   "salamander", "shatteredblade", "citizensforprosperity",
+                                                   "xenothreat"] {
+                                        if cn_lower.starts_with(prefix) {
+                                            if !faction_prefixes.contains(*prefix) {
+                                                via_npcs.push(n.class_name.clone());
+                                            }
+                                            faction_prefixes.insert(prefix.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Also extract factions from loadout names found via SQL
+                    for name in &loadout_names {
+                        let cn_lower = name.to_lowercase();
+                        for prefix in &["asd", "ninetails", "headhunter", "roughandready",
+                                       "salamander", "shatteredblade", "citizensforprosperity",
+                                       "xenothreat"] {
+                            if cn_lower.starts_with(prefix) {
+                                faction_prefixes.insert(prefix.to_string());
                             }
                         }
                     }
                 }
 
-                // Deduplicate NPCs
-                npc_ids.sort_by(|a, b| a.0.cmp(&b.0));
-                npc_ids.dedup_by(|a, b| a.0 == b.0);
-
-                // For each NPC, find their locations (1 hop — faction heuristic edges)
-                for (npc_id, npc_name) in &npc_ids {
-                    if let Ok(reachable) = qe.traverse(npc_id, 1) {
-                        for n in reachable {
-                            if n.entity_type == EntityType::Location && n.class_name != "default" {
-                                if !via_npcs.iter().any(|v| v == npc_name) {
-                                    via_npcs.push(npc_name.clone());
+                // Find locations matching discovered factions via SQL
+                tracing::info!("locate phase 2: {} factions found: {:?}", faction_prefixes.len(), faction_prefixes);
+                if !faction_prefixes.is_empty() {
+                    let conditions: Vec<String> = faction_prefixes.iter()
+                        .map(|f| format!("source_path LIKE '%{f}_%'"))
+                        .collect();
+                    let sql = format!(
+                        "SELECT uuid FROM entities WHERE entity_type = 'Location' AND ({}) LIMIT 200",
+                        conditions.join(" OR ")
+                    );
+                    if let Ok(rows) = qe.raw_sql(&sql) {
+                        for row in &rows {
+                            if let Some(uuid_str) = row.first() {
+                                if let Ok(uuid) = uuid_str.parse::<uuid::Uuid>() {
+                                    if let Ok(Some(loc)) = qe.lookup_by_uuid(&uuid) {
+                                        locations.push(loc);
+                                    }
                                 }
-                                locations.push(n);
                             }
                         }
                     }
@@ -538,6 +597,7 @@ impl DataP4kServer {
                 !cn.contains("entitycomponent") && !cn.contains("harvestablecomponent")
                     && !cn.contains("sctransit") && cn != "default"
                     && !cn.contains("actionarea") && !cn.contains("subsumption")
+                    && !cn.starts_with("old_") && !cn.contains("transitui")
             })
             .collect();
 
