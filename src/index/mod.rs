@@ -98,10 +98,11 @@ impl Indexer {
 
         // --- Edge resolution ---
         // Build lookup maps from parsed entities
+        // Case-insensitive class name lookup (file:// paths are often lowercase)
         let class_name_to_uuid: std::collections::HashMap<String, uuid::Uuid> = merged
             .nodes
             .iter()
-            .map(|n| (n.class_name.clone(), n.id))
+            .map(|n| (n.class_name.to_lowercase(), n.id))
             .collect();
 
         let known_uuids: std::collections::HashSet<uuid::Uuid> = merged
@@ -126,8 +127,9 @@ impl Indexer {
                         .rsplit('/')
                         .next()
                         .unwrap_or("")
-                        .trim_end_matches(".json");
-                    class_name_to_uuid.get(class_name).copied()
+                        .trim_end_matches(".json")
+                        .to_lowercase();
+                    class_name_to_uuid.get(&class_name).copied()
                 } else {
                     None
                 }
@@ -141,17 +143,18 @@ impl Indexer {
                     .and_then(|v| v.as_str());
 
                 if let Some(cn) = class_name {
+                    let cn_lower = cn.to_lowercase();
                     let v5_uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, cn.as_bytes());
                     if edge.target_id == v5_uuid {
                         // This is a v5-hashed placeholder — resolve to real entity UUID
-                        class_name_to_uuid.get(cn).copied()
+                        class_name_to_uuid.get(&cn_lower).copied()
                     } else {
                         // Target UUID is a real _RecordId_ — check if it exists
                         if known_uuids.contains(&edge.target_id) {
                             None // already resolved, keep as-is
                         } else {
                             // Target doesn't exist — try class name resolution
-                            class_name_to_uuid.get(cn).copied()
+                            class_name_to_uuid.get(&cn_lower).copied()
                         }
                     }
                 } else {
