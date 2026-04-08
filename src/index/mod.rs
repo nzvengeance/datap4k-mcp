@@ -182,13 +182,22 @@ impl Indexer {
             }
         });
 
-        let node_count = merged.nodes.len();
-        let edge_count = merged.edges.len();
-
         tracing::info!(
             "Edge resolution: {} resolved, {} dropped, {} remaining",
-            resolved_count, dropped_count, edge_count
+            resolved_count, dropped_count, merged.edges.len()
         );
+
+        // --- Faction-location heuristic ---
+        // Create edges between NPC actors and SOC locations that share a faction prefix.
+        // e.g. PU_Human_Enemy_GroundCombat_NPC_ASD_soldier → asd_labresearch_01a
+        let faction_edges = build_faction_location_edges(&merged.nodes);
+        if !faction_edges.is_empty() {
+            tracing::info!("Faction-location heuristic: {} edges created", faction_edges.len());
+            merged.edges.extend(faction_edges);
+        }
+
+        let node_count = merged.nodes.len();
+        let edge_count = merged.edges.len();
 
         // Insert nodes into SQLite
         self.sqlite.insert_nodes(&merged.nodes)
@@ -280,4 +289,108 @@ impl Indexer {
 
         Ok(counts)
     }
+}
+
+/// Known faction prefixes found in NPC actor class names.
+/// Maps the prefix (lowercase) as it appears after `PU_Human_Enemy_GroundCombat_NPC_`
+/// to how it appears in SOC location paths.
+const FACTION_PREFIXES: &[(&str, &[&str])] = &[
+    ("asd", &["asd_"]),
+    ("ninetails", &["ninetails", "9t_"]),
+    ("headhunters", &["headhunter"]),
+    ("roughandready", &["roughandready", "rough_and_ready"]),
+    ("salamanders", &["salamander"]),
+    ("shatteredblade", &["shatteredblade", "shattered_blade"]),
+    ("citizensforprosperity", &["citizensforprosperity", "cfp_"]),
+    ("xenothreat", &["xenothreat"]),
+];
+
+/// Extract a faction prefix from an NPC actor class name.
+///
+/// e.g. `PU_Human_Enemy_GroundCombat_NPC_ASD_soldier` → `"asd"`
+fn extract_actor_faction(class_name: &str) -> Option<&'static str> {
+    let lower = class_name.to_lowercase();
+    let npc_prefix = "pu_human_enemy_groundcombat_npc_";
+    if !lower.starts_with(npc_prefix) {
+        return None;
+    }
+    let after = &lower[npc_prefix.len()..];
+    for (faction, _) in FACTION_PREFIXES {
+        if after.starts_with(faction) {
+            return Some(faction);
+        }
+    }
+    None
+}
+
+/// Check if a SOC location path matches a faction.
+fn location_matches_faction(source_path: &str, faction: &str) -> bool {
+    let path_lower = source_path.to_lowercase();
+    if let Some((_, patterns)) = FACTION_PREFIXES.iter().find(|(f, _)| *f == faction) {
+        patterns.iter().any(|p| path_lower.contains(p))
+    } else {
+        false
+    }
+}
+
+/// Build edges connecting NPC actors to SOC locations that share a faction prefix.
+///
+/// This is a heuristic — the actual spawn system uses tags, but the naming convention
+/// is consistent enough to provide useful "where do these NPCs spawn?" answers.
+fn build_faction_location_edges(nodes: &[crate::model::Node]) -> Vec<crate::model::Edge> {
+    use crate::model::{Edge, EntityType};
+
+    // Collect actors by faction
+    let mut actors_by_faction: std::collections::HashMap<&str, Vec<uuid::Uuid>> =
+        std::collections::HashMap::new();
+    for node in nodes {
+        if let Some(faction) = extract_actor_faction(&node.class_name) {
+            actors_by_faction.entry(faction).or_default().push(node.id);
+        }
+    }
+
+    if actors_by_faction.is_empty() {
+        return vec![];
+    }
+
+    // Collect locations by faction
+    let mut locations_by_faction: std::collections::HashMap<&str, Vec<uuid::Uuid>> =
+        std::collections::HashMap::new();
+    for node in nodes {
+        if node.entity_type != EntityType::Location {
+            continue;
+        }
+        for (faction, _) in FACTION_PREFIXES {
+            if location_matches_faction(&node.source_path, faction) {
+                locations_by_faction.entry(faction).or_default().push(node.id);
+            }
+        }
+    }
+
+    // Create edges: each actor → each matching location
+    let mut edges = Vec::new();
+    for (faction, actor_ids) in &actors_by_faction {
+        if let Some(location_ids) = locations_by_faction.get(faction) {
+            for &actor_id in actor_ids {
+                for &location_id in location_ids {
+                    edges.push(Edge {
+                        source_id: actor_id,
+                        target_id: location_id,
+                        label: "spawns_at".to_string(),
+                        source_field: format!("faction_heuristic:{faction}"),
+                        properties: {
+                            let mut p = std::collections::HashMap::new();
+                            p.insert(
+                                "faction".to_string(),
+                                serde_json::Value::String(faction.to_string()),
+                            );
+                            p
+                        },
+                    });
+                }
+            }
+        }
+    }
+
+    edges
 }
